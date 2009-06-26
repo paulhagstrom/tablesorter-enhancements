@@ -1,0 +1,108 @@
+This at the moment just contains a couple of changes I made to Christian Bach's tablesorter jQuery plugin.
+
+I made these changes a long time ago, there are some comments in the code.
+
+I don't want to go back and figure out what I was doing, but here are a couple of snippets from the Rails app I was using it in.  No guarantees on the usefulness or well-writtenness of this.
+
+From a controller:
+
+def rjs_row(instance)
+  row_identifier = resource_name + '_' + instance.id.to_s
+  js_emit = "jQuery('#table_#{resources_name}').trigger('injectRow', jQuery('##{row_identifier}'));" + 
+      "jQuery('##{row_identifier}').effect('pulsate',{times:1},250);" +
+      "jQuery('#table_#{resources_name}').trigger('sorton');" #+
+      # "jQuery('#flash_notice').load('/admin/show_flash');"
+  rjs_raw(js_emit)
+  rjs_flash flash[:notice]
+  @html_replacements.replace(@html_replacements.merge(
+      {row_identifier => ['row', instance, {:inner => true}]}))
+end
+
+# ...where the rjs_raw, rjs_flash, @html_replacements, etc., are all setting things up for a big render :update afterwards.
+
+def rjs_update
+  object = resources_name
+  render :update do |page|
+    for div_name, partial_name in @html_replacements
+      if partial_name.class == Array
+        page.replace_html div_name, :partial => partial_name[0], :object => partial_name[1],
+            :locals => partial_name[2]
+      else
+        page.replace_html div_name, :partial => partial_name, :object => object
+      end
+    end
+...
+    for js in @raw_js
+      page << js
+    end
+  end
+end
+
+A partial that defines a couple of other things
+
+<%
+# This sets up a table to be sortable.
+# The assumption is that the object for this partial is the objects_name
+# If default_sort is passed in, it will be used.  It should be a string representing a Javascript array,
+# e.g., [[0,0],[1,1]] to sort ascending on the first column and then descending on the second.
+# If an array is passed in as the local live_filter, it will be used to determine which columns are live-sorted.
+# By default, it is [1,2]. 1 is the second column, generally the one after Edit.
+# It is important that if the paginator is not rendered that the pagerfilter option not be used here
+# Send skip_paginate in as true if we're skipping the paginator
+# This uses:
+# http://tablesorter.com/docs/
+table_id ||= 'table_' + admin_sort_table
+pager_id ||= 'pager_' + admin_sort_table
+skip_paginate ||= false
+default_sort ||= nil
+focus_id ||= nil
+if defined?(live_filter) && !live_filter.nil? && live_filter.class == Array
+	filter_col = '[' + live_filter.join(',') + ']'
+else
+	filter_col = '[1,2]'
+end
+js_emit_pagerfilter = <<EOF
+}).tablesorterPagerFilter({	// uses a modified tablesorterPager to add filtering capability
+	container: jQuery("##{pager_id}"),
+	filterCol: #{filter_col},
+	#{focus_id ? "focus: '#{focus_id}'," : ''}
+	positionFixed: false
+EOF
+js_emit = <<EOF
+// add a texty metadata parser (built in one is numeric)
+//jQuery(document).ready(function() {
+	jQuery.tablesorter.addParser({ 
+	    id: 'metatext', 
+	    is: function(s) { 
+	        return false; 
+	    }, 
+	    format: function(s,table,cell) { 
+				var c = table.config, p = (!c.parserMetadataName) ? 'sortValue' : c.parserMetadataName;
+		        return jQuery(cell).metadata()[p];
+	    }, 
+	    type: 'text'
+	}); 
+	// add a modified zebra that will ignore rows marked as "dezebra".
+	jQuery.tablesorter.addWidget({
+		id: "zebraph",
+		format: function(table) {
+			if(table.config.debug) { var time = new Date(); }
+			jQuery("tr:visible:not(.dezebra)",table.tBodies[0])
+	        .filter(':even')
+	        .removeClass(table.config.widgetZebra.css[1]).addClass(table.config.widgetZebra.css[0])
+	        .end().filter(':odd')
+	        .removeClass(table.config.widgetZebra.css[0]).addClass(table.config.widgetZebra.css[1]);
+			if(table.config.debug) { jQuery.tablesorter.benchmark("Applying Zebraph widget", time); }
+		}
+	});	
+	jQuery('##{table_id}').tablesorter({
+			debug: true,
+			widthFixed: true,
+			#{default_sort ? "sortList: #{default_sort}," : ''}
+			widgets: ['zebraph']
+#{skip_paginate ? '' : js_emit_pagerfilter}
+	});
+//});
+EOF
+%>
+<%= javascript_tag js_emit %>
