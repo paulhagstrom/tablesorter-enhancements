@@ -1,3 +1,7 @@
+//PH: Fixed an exception for empty tables, see around line 250.
+//PH: Also allow the sorton event to be triggered without any arguments to just re-sort with same order
+//PH: And, added a method to inject a single row into the cache without reparsing the table.
+//PH: And made the width calculation function only operate on the first row (was failing when table contained tables)
 /*
  * 
  * TableSorter 2.0 - Client-side table sorting with ease!
@@ -115,13 +119,13 @@
 			
 			/* debuging utils */
 			function benchmark(s,d) {
-				log(s + ": " + (new Date().getTime() - d.getTime()) + "ms");
+				log(s + "," + (new Date().getTime() - d.getTime()) + "ms");
 			}
 			
 			this.benchmark = benchmark;
 			
 			function log(s) {
-				if (console !== undefined && console.debug !== undefined) {
+				if (typeof console != "undefined" && typeof console.debug != "undefined") {
 					console.log(s);
 				} else {
 					alert(s);
@@ -213,7 +217,7 @@
 						cols = null;
 					};
 				
-				if(table.config.debug) { benchmark("Built cache for " + totalRows + " rows", cacheTime); }
+				if(table.config.debug) { benchmark("Building cache for " + totalRows + " rows:", cacheTime); }
 				
 				return cache;
 			};
@@ -240,34 +244,67 @@
 				return t;
 			}
 			
+			//PH
+			function injectToCache(table,cache,newrow) {
+				if(table.config.debug) { var cacheTime = new Date(); }
+				var c = cache, 
+					r = c.row, 
+					n = c.normalized, 
+					d = newrow.id,
+					cs = newrow.cells,
+					totalCells = newrow.cells.length,
+					totalRows = n.length, 
+					checkCell = (n[0] && n[0].length-1) || 0,
+					parsers = table.config.parsers,
+					cols = [];
+				// find the row in the cache with the same id and replace it
+				for (var i=0;i < totalRows; i++) {
+					if( d == r[i].attr("id") ) {
+						c.row[i] = $(newrow);
+						for (var k=0;k < totalRows; k++) {
+							if( i == n[k][checkCell]) {
+								// normalize data for the new row
+								for(var j=0; j < totalCells; ++j) {
+									cols.push(parsers[j].format(getElementText(table.config,cs[j]),table,cs[j]));	
+								}
+								cols.push(i); // add position for rowCache
+								c.normalized[k] = cols;
+								break;
+							}
+						}
+						break;
+					}
+				}
+				if(table.config.debug) { benchmark("Injecting row id " + d + ":", cacheTime); }
+				return c;
+			}
+			
 			function appendToTable(table,cache) {
 				
 				if(table.config.debug) {var appendTime = new Date()}
-				
+
 				var c = cache, 
 					r = c.row, 
 					n= c.normalized, 
 					totalRows = n.length, 
+					checkCell = (n[0] && n[0].length-1) || 0, //PH
+//PH				checkCell = (n[0].length-1), 
 					tableBody = $(table.tBodies[0]),
 					rows = [];
-				
-				if (totalRows > 0) {
-					var checkCell = (n[0].length-1);
-					
-					for (var i=0;i < totalRows; i++) {
-						rows.push(r[n[i][checkCell]]);	
-						if(!table.config.appender) {
+
+				for (var i=0;i < totalRows; i++) {
+					rows.push(r[n[i][checkCell]]);	
+					if(!table.config.appender) {
 						
-							var o = r[n[i][checkCell]];
-							var l = o.length;
-							for(var j=0; j < l; j++) {
+						var o = r[n[i][checkCell]];
+						var l = o.length;
+						for(var j=0; j < l; j++) {
 							
-								tableBody[0].appendChild(o[j]);
+							tableBody[0].appendChild(o[j]);
 						
-							}
-						
-							//tableBody.append(r[n[i][checkCell]]);
 						}
+						
+						//tableBody.append(r[n[i][checkCell]]);
 					}
 				}	
 				
@@ -278,7 +315,7 @@
 				
 				rows = null;
 				
-				if(table.config.debug) { benchmark("Rebuilt table", appendTime); }
+				if(table.config.debug) { benchmark("Rebuilt table:", appendTime); }
 								
 				//apply table widgets
 				applyWidget(table);
@@ -316,7 +353,7 @@
 					table.config.headerList[index]= this;
 				});
 				
-				if(table.config.debug) { benchmark("Built headers", time); log($tableHeaders); }
+				if(table.config.debug) { benchmark("Built headers:", time); log($tableHeaders); }
 				
 				return $tableHeaders;
 				
@@ -395,14 +432,16 @@
 				
 				var h = [];
 				$headers.each(function(offset) {
-						if(!this.sortDisabled) {
-							h[this.column] = $(this);					
-						}
+					if(!this.sortDisabled) {
+						h[this.column] = $(this);
+					}
 				});
 				
 				var l = list.length; 
 				for(var i=0; i < l; i++) {
-					h[list[i][0]].addClass(css[list[i][1]]);
+					if(h[list[i][0]]) {				// PH
+						h[list[i][0]].addClass(css[list[i][1]]);
+					}									// PH
 				}
 			}
 			
@@ -410,7 +449,8 @@
 				var c = table.config;
 				if(c.widthFixed) {
 					var colgroup = $('<colgroup>');
-					$("tr:first td",table.tBodies[0]).each(function() {
+					$("tr:first > td",table.tBodies[0]).each(function() {		// PH
+					// $("tr:first td",table.tBodies[0]).each(function() {
 						colgroup.append($('<col>').css('width',$(this).width()));
 					});
 					$(table).prepend(colgroup);
@@ -461,7 +501,7 @@
 				
 				cache.normalized.sort(sortWrapper);
 				
-				if(table.config.debug) { benchmark("Sorted " + sortList.toString(), sortTime); }
+				if(table.config.debug) { benchmark("Sorting on " + sortList.toString() + " and dir " + order+ " time:", sortTime); }
 				
 				return cache;
 			};
@@ -512,9 +552,6 @@
 					// build the cache for the tbody cells
 					cache = buildCache(this);
 					
-					// store a copy of the original cache of all rows
-					this.config.cache = cache;
-					
 					// get the css class names, could be done else where.
 					var sortCSS = [config.cssDesc,config.cssAsc];
 					
@@ -541,7 +578,7 @@
 							// get current column sort order
 							this.order = this.count++ % 2;
 							
-							// user only wants to sort on one column
+							// user only whants to sort on one column
 							if(!e[config.sortMultiSortKey]) {
 								
 								// flush the sort list
@@ -607,7 +644,9 @@
 						
 						$(this).trigger("sortStart");
 						
-						config.sortList = list;
+						if( arguments.length > 1 ) {		//PH: Allow no sort list to simply re-sort
+							config.sortList = list;	
+						}									//PH
 						
 						// update and store the sortlist
 						var sortList = config.sortList;
@@ -617,7 +656,6 @@
 						
 						//set css for headers
 						setHeadersCss(this,$headers,sortList,sortCSS);
-						
 						
 						// sort the table and append it to the dom
 						appendToTable(this,multisort(this,sortList,cache));
@@ -633,6 +671,30 @@
 					}).bind("applyWidgets",function() {
 						// apply widgets
 						applyWidget(this);
+
+					}).bind("injectRow", function(e,newrow) {		//PH
+						// inject a revised value into the cache	//PH
+						cache = injectToCache(this,cache,newrow);	//PH
+						
+					}).bind("findRow", function(e,id,callback) {	//PH
+						// Locate a row by id						//PH
+						var	r = cache.row,
+							n = cache.normalized,
+							checkCell = (n[0] && n[0].length-1) || 0,
+							loc = 0,
+							totalRows = n.length;
+						for (var i=0;i < totalRows; i++) {
+							if( id == r[i].attr("id") ) {
+								for (var k=0;k < totalRows; k++) {
+									if( i == n[k][checkCell]) {
+										loc = k + 1;
+										break;
+									}
+								}
+								break;
+							}
+						}
+						callback(this,loc);
 					});
 					
 					if($.metadata && ($(this).metadata() && $(this).metadata().sortlist)) {
@@ -647,7 +709,7 @@
 					applyWidget(this);
 				});
 			};
-			
+						
 			this.addParser = function(parser) {
 				var l = parsers.length, a = true;
 				for(var i=0; i < l; i++) {
@@ -852,7 +914,7 @@
 	        .removeClass(table.config.widgetZebra.css[1]).addClass(table.config.widgetZebra.css[0])
 	        .end().filter(':odd')
 	        .removeClass(table.config.widgetZebra.css[0]).addClass(table.config.widgetZebra.css[1]);
-			if(table.config.debug) { $.tablesorter.benchmark("Applied Zebra widget", time); }
+			if(table.config.debug) { $.tablesorter.benchmark("Applying Zebra widget", time); }
 		}
 	});	
 })(jQuery);
